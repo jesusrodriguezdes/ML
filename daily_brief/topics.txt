@@ -1,0 +1,6 @@
+# Topics to research, one per line.
+# Blank lines and lines starting with "#" are ignored.
+# Edit this file anytime to change what the daily brief covers — no code changes needed.
+
+Developments in fusion energy
+New large language model releases
