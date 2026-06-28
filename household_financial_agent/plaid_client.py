@@ -19,7 +19,6 @@ from plaid.model.transactions_get_request_options import TransactionsGetRequestO
 
 _ENV_MAP = {
     "sandbox": plaid.Environment.Sandbox,
-    "development": plaid.Environment.Development,
     "production": plaid.Environment.Production,
 }
 
