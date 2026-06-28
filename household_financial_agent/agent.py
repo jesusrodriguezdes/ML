@@ -21,6 +21,8 @@ import os
 import anthropic
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from tools import TOOL_DEFINITIONS, dispatch
 
 MODEL = "claude-opus-4-8"
