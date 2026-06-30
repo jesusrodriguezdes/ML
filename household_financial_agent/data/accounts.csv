@@ -1,0 +1,4 @@
+name,type,subtype,current_balance,available_balance,currency
+Main Checking,depository,checking,2450.00,2450.00,USD
+Savings Account,depository,savings,8200.00,8200.00,USD
+Credit Card,credit,credit card,-1200.00,3800.00,USD

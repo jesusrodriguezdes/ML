@@ -2,7 +2,7 @@
 
 import json
 
-from plaid_client import (
+from csv_client import (
     fetch_account_balances,
     fetch_monthly_summary,
     fetch_spending_by_category,

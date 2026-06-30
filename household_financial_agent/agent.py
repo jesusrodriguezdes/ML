@@ -1,22 +1,20 @@
 """Household financial planning agent.
 
-Interactive CLI that uses Claude + Plaid to answer natural-language budget questions.
+Interactive CLI that uses Claude to answer natural-language budget questions.
+Financial data is read from local CSV files you can edit in Excel or Google Sheets.
 
-Required env vars (in .env or environment):
+Required env vars (in .env):
     ANTHROPIC_API_KEY
-    PLAID_CLIENT_ID
-    PLAID_SECRET
-    PLAID_ENV        sandbox | development | production
-    PLAID_ACCESS_TOKEN
 
-First-time setup:
-    python household_financial_agent/setup_plaid.py
+Data files to fill in with your numbers:
+    household_financial_agent/data/accounts.csv
+    household_financial_agent/data/transactions.csv
 
 Run:
     python household_financial_agent/agent.py
 """
 
-import os
+import pathlib
 
 import anthropic
 from dotenv import load_dotenv
@@ -82,11 +80,13 @@ def ask(question: str) -> str:
 def main() -> None:
     load_dotenv()
 
-    # Validate that the essential Plaid token is present before starting the loop.
-    if not os.environ.get("PLAID_ACCESS_TOKEN"):
+    data_dir = pathlib.Path(__file__).parent / "data"
+    missing = [f for f in ("transactions.csv", "accounts.csv") if not (data_dir / f).exists()]
+    if missing:
         print(
-            "PLAID_ACCESS_TOKEN not set.\n"
-            "Run: python household_financial_agent/setup_plaid.py"
+            f"Missing data file(s): {', '.join(missing)}\n"
+            "Open the files in household_financial_agent/data/ and add your numbers.\n"
+            "You can edit them in Excel, Google Sheets, or any text editor."
         )
         return
 
