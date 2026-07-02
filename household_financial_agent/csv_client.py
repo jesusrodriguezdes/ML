@@ -80,6 +80,44 @@ def fetch_spending_by_category(year: int, month: int) -> dict[str, float]:
     return dict(sorted(totals.items(), key=lambda x: x[1], reverse=True))
 
 
+def detect_recurring_charges() -> list[dict]:
+    """Find likely subscriptions: same merchant charged in 2+ distinct months
+    at a similar amount (within 15% of the average).
+
+    Returns candidates with estimated monthly cost, sorted most expensive first.
+    """
+    by_name: dict[str, list[dict]] = {}
+    with open(_TRANSACTIONS_FILE, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            amount = float(row["amount"])
+            if amount <= 0:
+                continue  # only money going out can be a subscription
+            key = row["name"].strip().lower()
+            by_name.setdefault(key, []).append(
+                {"date": row["date"], "name": row["name"], "amount": amount}
+            )
+
+    candidates = []
+    for txns in by_name.values():
+        months = {txn["date"][:7] for txn in txns}  # YYYY-MM
+        if len(months) < 2:
+            continue
+        amounts = [txn["amount"] for txn in txns]
+        avg = sum(amounts) / len(amounts)
+        if any(abs(a - avg) > 0.15 * avg for a in amounts):
+            continue  # amounts vary too much to look like a subscription
+        candidates.append(
+            {
+                "name": txns[0]["name"],
+                "estimated_monthly_cost": round(avg, 2),
+                "months_seen": sorted(months),
+                "occurrences": len(txns),
+                "last_charged": max(txn["date"] for txn in txns),
+            }
+        )
+    return sorted(candidates, key=lambda c: c["estimated_monthly_cost"], reverse=True)
+
+
 def fetch_monthly_summary(year: int, month: int) -> dict:
     """Return income, expenses, and net for the given month."""
     _, last_day = calendar.monthrange(year, month)

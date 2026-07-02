@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 .env
 *.env
+
+# Personal financial memory files (agent-managed, stay on your computer only)
+household_financial_agent/data/*.json
