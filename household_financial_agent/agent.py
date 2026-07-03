@@ -18,6 +18,7 @@ Run:
 
 import datetime
 import json
+import os
 import pathlib
 
 import anthropic
@@ -28,7 +29,10 @@ load_dotenv()
 import memory
 from tools import TOOL_DEFINITIONS, dispatch
 
-MODEL = "claude-opus-4-8"
+# The coach uses the expensive model for real judgment and conversation.
+# Bulk transaction classification is handled separately by classify.py on a
+# cheap model. Override either via .env (COACH_MODEL / CLASSIFIER_MODEL).
+COACH_MODEL = os.environ.get("COACH_MODEL", "claude-opus-4-8")
 MAX_TOKENS = 4000
 MAX_TOOL_ITERATIONS = 15
 
@@ -168,7 +172,7 @@ def run_turn(messages: list, system_prompt: str) -> str:
     """Run one agentic turn: call the model, dispatch tools until it stops."""
     for _ in range(MAX_TOOL_ITERATIONS):
         resp = client.messages.create(
-            model=MODEL,
+            model=COACH_MODEL,
             max_tokens=MAX_TOKENS,
             system=system_prompt,
             tools=TOOL_DEFINITIONS,
