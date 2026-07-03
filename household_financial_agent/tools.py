@@ -5,6 +5,7 @@ import csv
 import datetime
 import json
 import pathlib
+import statistics
 
 import memory
 import taxonomy
@@ -69,6 +70,55 @@ def resolve_transactions(match: str, category: str, is_transfer: bool = False) -
             updated += 1
     _write_tx(rows, fields)
     return {"updated": updated, "match": match_l, "category": category, "is_transfer": is_transfer}
+
+
+def estimate_income(months_back: int = 12) -> dict:
+    """Estimate typical monthly income from categorized deposits.
+
+    Uses only rows tagged Income (transfers excluded), groups by month, skips
+    the current partial month, and reports the average/median plus whether
+    income is fixed or variable and where it comes from.
+    """
+    rows, _ = _read_tx()
+    current_month = datetime.date.today().strftime("%Y-%m")
+    by_month: dict[str, float] = {}
+    sources: dict[str, float] = {}
+    for r in rows:
+        if str(r.get("is_transfer")).lower() == "true":
+            continue
+        if r.get("category") != taxonomy.INCOME_CATEGORY:
+            continue
+        month = r["date"][:7]
+        if not month or month == current_month:
+            continue  # skip the incomplete current month
+        amt = abs(float(r["amount"]))
+        by_month[month] = round(by_month.get(month, 0.0) + amt, 2)
+        key = taxonomy.normalize_merchant(r["name"])
+        sources[key] = round(sources.get(key, 0.0) + amt, 2)
+
+    if not by_month:
+        return {
+            "estimated_monthly_income": 0.0,
+            "confidence": "none",
+            "note": "No income found. Tag some deposits as Income during review first.",
+        }
+
+    recent = sorted(by_month)[-months_back:]
+    totals = [by_month[m] for m in recent]
+    avg = statistics.mean(totals)
+    cv = (statistics.pstdev(totals) / avg) if avg else 0.0
+    top = sorted(sources.items(), key=lambda x: x[1], reverse=True)[:3]
+    return {
+        "estimated_monthly_income": round(avg, 2),
+        "median_monthly_income": round(statistics.median(totals), 2),
+        "pattern": "fixed" if cv < 0.15 else "variable",
+        "variability_ratio": round(cv, 2),
+        "months_analyzed": len(recent),
+        "range": {"low": round(min(totals), 2), "high": round(max(totals), 2)},
+        "monthly_breakdown": {m: by_month[m] for m in recent},
+        "top_sources": [{"source": s, "total": t} for s, t in top],
+        "confidence": "high" if len(recent) >= 3 else "low",
+    }
 
 
 def get_categorization_summary() -> dict:
@@ -288,6 +338,17 @@ TOOL_DEFINITIONS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "estimate_income",
+        "description": "Estimate the user's typical monthly income from their categorized deposits (Income category, transfers excluded). Returns average and median monthly income, whether it's fixed or variable, a per-month breakdown, and the top income sources. During onboarding, ALWAYS call this first to PROPOSE an income figure for the user to confirm, instead of asking them to recall it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "months_back": {"type": "integer", "description": "How many recent complete months to analyze (default 12)."}
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "get_canonical_categories",
         "description": "List the valid canonical spending categories to choose from when categorizing.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -351,6 +412,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         )
     elif tool_name == "get_categorization_summary":
         result = get_categorization_summary()
+    elif tool_name == "estimate_income":
+        result = estimate_income(tool_input.get("months_back", 12))
     elif tool_name == "get_canonical_categories":
         result = {"expense": taxonomy.EXPENSE_CATEGORIES, "income": taxonomy.INCOME_CATEGORY, "transfer": taxonomy.TRANSFER_CATEGORY}
     elif tool_name == "get_review_history":
