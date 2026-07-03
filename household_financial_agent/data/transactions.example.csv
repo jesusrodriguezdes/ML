@@ -1,0 +1,8 @@
+date,name,amount,category,account,is_transfer,source_note
+2026-06-01,Whole Foods Market,85.43,Groceries,Chase 8398,false,example
+2026-06-03,Netflix,15.99,Software & Subscriptions,Chase 8398,false,example
+2026-06-10,Paycheck,-3200.00,Income,Bank of America 8100,false,example
+2026-06-12,Electric Bill,120.00,Bills & Utilities,Chase 8398,false,example
+2026-06-15,Transfer to Savings,500.00,Transfer,Bank of America 8100,true,example
+2026-06-18,Shell Gas,55.00,Auto & Transport,Chase 8398,false,example
+2026-06-20,Chase Credit Card Payment,-450.00,Transfer,Chase 8398,true,example

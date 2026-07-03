@@ -40,13 +40,26 @@ def fetch_account_balances() -> list[dict]:
     return accounts
 
 
-def fetch_transactions(days: int) -> list[dict]:
-    """Return transactions from the past `days` days."""
+def _is_transfer(row: dict) -> bool:
+    return str(row.get("is_transfer", "")).strip().lower() in {"true", "1", "yes"}
+
+
+def fetch_transactions(days: int, include_transfers: bool = False) -> list[dict]:
+    """Return transactions from the past `days` days.
+
+    Money moved between the user's own accounts (is_transfer=true) is excluded
+    by default so it never inflates spending or income.
+    """
     cutoff = datetime.date.today() - datetime.timedelta(days=days)
     transactions = []
     with open(_TRANSACTIONS_FILE, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            txn_date = datetime.date.fromisoformat(row["date"])
+            if not include_transfers and _is_transfer(row):
+                continue
+            try:
+                txn_date = datetime.date.fromisoformat(row["date"])
+            except (ValueError, KeyError):
+                continue  # skip rows with a missing/blank date
             if txn_date >= cutoff:
                 transactions.append(
                     {
@@ -89,6 +102,8 @@ def detect_recurring_charges() -> list[dict]:
     by_name: dict[str, list[dict]] = {}
     with open(_TRANSACTIONS_FILE, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
+            if _is_transfer(row):
+                continue
             amount = float(row["amount"])
             if amount <= 0:
                 continue  # only money going out can be a subscription

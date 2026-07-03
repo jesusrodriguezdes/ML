@@ -1,10 +1,14 @@
 """Claude tool definitions and dispatcher for the financial agent."""
 
 import calendar
+import csv
 import datetime
 import json
+import pathlib
 
 import memory
+import taxonomy
+from categorize import add_rule
 from csv_client import (
     detect_recurring_charges,
     fetch_account_balances,
@@ -12,6 +16,84 @@ from csv_client import (
     fetch_spending_by_category,
     fetch_transactions,
 )
+
+_TX_FILE = pathlib.Path(__file__).parent / "data" / "transactions.csv"
+
+
+def _read_tx() -> tuple[list[dict], list[str]]:
+    with open(_TX_FILE, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        return rows, list(reader.fieldnames or [])
+
+
+def _write_tx(rows: list[dict], fields: list[str]) -> None:
+    with open(_TX_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def get_review_queue(limit: int = 15) -> dict:
+    """Merchant groups still needing categorization, biggest dollar total first."""
+    rows, _ = _read_tx()
+    groups: dict[str, dict] = {}
+    for r in rows:
+        if r.get("category") != taxonomy.REVIEW:
+            continue
+        key = taxonomy.normalize_merchant(r["name"])
+        g = groups.setdefault(
+            key, {"match": key, "example": r["name"], "occurrences": 0, "total": 0.0}
+        )
+        g["occurrences"] += 1
+        g["total"] = round(g["total"] + float(r["amount"]), 2)
+    ordered = sorted(groups.values(), key=lambda g: abs(g["total"]), reverse=True)
+    return {
+        "remaining_groups": len(ordered),
+        "remaining_transactions": sum(g["occurrences"] for g in ordered),
+        "batch": ordered[:limit],
+    }
+
+
+def resolve_transactions(match: str, category: str, is_transfer: bool = False) -> dict:
+    """Save a rule and apply it to every unresolved transaction whose name
+    contains `match` (case-insensitive). Returns how many rows were updated."""
+    match_l = match.strip().lower()
+    add_rule(match_l, category, is_transfer)
+    rows, fields = _read_tx()
+    updated = 0
+    for r in rows:
+        if match_l in r["name"].lower() and r.get("category") == taxonomy.REVIEW:
+            r["category"] = category
+            r["is_transfer"] = "true" if is_transfer else "false"
+            updated += 1
+    _write_tx(rows, fields)
+    return {"updated": updated, "match": match_l, "category": category, "is_transfer": is_transfer}
+
+
+def get_categorization_summary() -> dict:
+    """Overall state of the categorized dataset across all history."""
+    rows, _ = _read_tx()
+    total = len(rows)
+    needs = sum(1 for r in rows if r.get("category") == taxonomy.REVIEW)
+    transfers = sum(1 for r in rows if str(r.get("is_transfer")).lower() == "true")
+    spend: dict[str, float] = {}
+    for r in rows:
+        if str(r.get("is_transfer")).lower() == "true":
+            continue
+        cat = r.get("category", "")
+        if cat in (taxonomy.REVIEW, taxonomy.INCOME_CATEGORY, taxonomy.TRANSFER_CATEGORY):
+            continue
+        amt = float(r["amount"])
+        if amt > 0:
+            spend[cat] = round(spend.get(cat, 0.0) + amt, 2)
+    return {
+        "total_transactions": total,
+        "needs_review": needs,
+        "reviewed_percent": round(100 * (total - needs) / total, 1) if total else 0,
+        "transfers_excluded": transfers,
+        "lifetime_spend_by_category": dict(sorted(spend.items(), key=lambda x: x[1], reverse=True)),
+    }
 
 
 def get_budget_status(year: int | None = None, month: int | None = None) -> dict:
@@ -177,6 +259,40 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "get_review_queue",
+        "description": "Get the next batch of transaction merchant-groups that still need a category, biggest dollar total first. Each group has a 'match' string (use it verbatim when calling resolve_transactions), an example name, occurrence count, and total amount. Use this to drive the data-cleanup flow.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "How many merchant groups to return (default 15)."}
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "resolve_transactions",
+        "description": "Categorize every unresolved transaction whose name contains `match`, and save it as a permanent rule so it's never asked again. Set is_transfer=true for money moved between the user's own accounts (checking<->savings, cross-bank Zelle to self) so it is excluded from spending. Category must be one of the canonical categories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "match": {"type": "string", "description": "Lowercase substring identifying the merchant (usually the 'match' from get_review_queue)."},
+                "category": {"type": "string", "description": "Canonical category, or 'Transfer' if is_transfer is true."},
+                "is_transfer": {"type": "boolean", "description": "True if this is money between the user's own accounts (not real spending or income)."},
+            },
+            "required": ["match", "category"],
+        },
+    },
+    {
+        "name": "get_categorization_summary",
+        "description": "Overall state of the categorized dataset: total transactions, how many still need review, percent reviewed, transfers excluded, and lifetime spending by category. Use it to report cleanup progress and give a big-picture spending breakdown.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_canonical_categories",
+        "description": "List the valid canonical spending categories to choose from when categorizing.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "get_review_history",
         "description": "Load the log of past weekly reviews (date, category performance, wins, concerns, commitments). Use it to spot trends across weeks and to check whether past commitments were kept.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -227,6 +343,16 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
     elif tool_name == "save_subscriptions":
         memory.save_subscriptions(tool_input["subscriptions"])
         result = {"status": "saved"}
+    elif tool_name == "get_review_queue":
+        result = get_review_queue(tool_input.get("limit", 15))
+    elif tool_name == "resolve_transactions":
+        result = resolve_transactions(
+            tool_input["match"], tool_input["category"], tool_input.get("is_transfer", False)
+        )
+    elif tool_name == "get_categorization_summary":
+        result = get_categorization_summary()
+    elif tool_name == "get_canonical_categories":
+        result = {"expense": taxonomy.EXPENSE_CATEGORIES, "income": taxonomy.INCOME_CATEGORY, "transfer": taxonomy.TRANSFER_CATEGORY}
     elif tool_name == "get_review_history":
         result = memory.load_review_log()
     elif tool_name == "log_weekly_review":

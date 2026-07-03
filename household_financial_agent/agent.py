@@ -51,6 +51,30 @@ tells you something durable about their life (rent change, new goal, new job), \
 update the profile before the conversation moves on.
 - Amounts in transactions: positive = money out (expense), negative = money in (income).
 
+## Flow 0 — Data cleanup / categorization (when get_categorization_summary shows needs_review > 0)
+Before budgeting can be trusted, every transaction needs a clean category and \
+transfers must be excluded. If there are transactions needing review, offer to \
+clean them up (it makes every later number accurate).
+1. get_categorization_summary to see how many remain and the progress so far.
+2. get_review_queue to pull a batch of merchant-groups (biggest dollar totals first).
+3. Walk them one group at a time. For each, tell the user the merchant, how many \
+times it appears, and the total. Use get_canonical_categories for valid options. \
+Then either propose the obvious category and confirm, or ask what it was:
+   - Money the user moved between their OWN accounts (checking<->savings, a Zelle \
+to themselves, a big ACH between their own banks) → resolve_transactions with \
+is_transfer=true (category 'Transfer').
+   - A payment to another person: ask what for. Paying a contractor/friend for a \
+service is a real expense in the right category; splitting rent with a spouse may \
+be Housing; money COMING IN from someone (e.g. recurring Zelle from the same \
+person) is often Income (rent from a tenant) or a reimbursement — ask which.
+   - A normal merchant → the matching expense category.
+4. Call resolve_transactions(match, category, is_transfer) using the group's \
+'match' string. This saves a permanent rule so it's never asked again.
+5. For the long tail of tiny one-off merchants, offer to batch them: suggest a \
+best-fit category per small group and confirm in bulk rather than one by one.
+6. When needs_review hits 0, confirm it and show the lifetime spend-by-category \
+breakdown so the user sees where the money actually goes.
+
 ## Flow 1 — Onboarding interview (when get_profile returns empty)
 Introduce yourself briefly, then interview the user one question at a time:
 1. Income: how much per month, and is it fixed or variable?
@@ -108,6 +132,17 @@ client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
 def build_system_prompt() -> str:
     """Coach prompt + today's date + everything we remember about the user."""
     parts = [COACH_PROMPT, f"\nToday's date: {datetime.date.today().isoformat()}"]
+
+    try:
+        import tools
+        cat = tools.get_categorization_summary()
+        parts.append(
+            f"\n## Data status\n{cat['reviewed_percent']}% of {cat['total_transactions']} "
+            f"transactions are categorized; {cat['needs_review']} still need review. "
+            f"{cat['transfers_excluded']} transfers are excluded from spending."
+        )
+    except (FileNotFoundError, KeyError):
+        pass
 
     profile = memory.load_profile()
     if profile:
@@ -183,10 +218,12 @@ def main() -> None:
         {
             "role": "user",
             "content": (
-                "[The user just opened the app. Greet them appropriately: run the "
-                "onboarding interview if they have no profile; otherwise give a "
-                "one-paragraph status check-in — how this month is tracking against "
-                "budget — and offer a weekly review if one is overdue. Use tools first.]"
+                "[The user just opened the app. Greet them appropriately. If many "
+                "transactions still need review, offer the data-cleanup flow first "
+                "(the numbers can't be trusted until it's done). Otherwise: run the "
+                "onboarding interview if they have no profile; if they have one, give "
+                "a one-paragraph status check-in and offer a weekly review if overdue. "
+                "Use tools before making any claims.]"
             ),
         }
     ]
