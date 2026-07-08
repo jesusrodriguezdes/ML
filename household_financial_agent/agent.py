@@ -198,6 +198,9 @@ def run_turn(messages: list, system_prompt: str) -> str:
             tools=TOOL_DEFINITIONS,
             messages=messages,
         )
+        u = resp.usage
+        print(f"  [tokens: {u.cache_read_input_tokens} from cache (~90% off), "
+              f"{u.cache_creation_input_tokens} written to cache, {u.input_tokens} full price]")
         messages.append({"role": "assistant", "content": resp.content})
 
         if resp.stop_reason == "tool_use":
