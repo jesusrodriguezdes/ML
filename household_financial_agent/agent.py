@@ -177,10 +177,24 @@ def build_system_prompt() -> str:
 def run_turn(messages: list, system_prompt: str) -> str:
     """Run one agentic turn: call the model, dispatch tools until it stops."""
     for _ in range(MAX_TOOL_ITERATIONS):
+        # Prompt caching: the marker on the system block caches the tool
+        # definitions + system prompt (the API renders tools -> system ->
+        # messages, and a cache point covers everything before it). The
+        # top-level cache_control adds a second cache point at the end of the
+        # conversation history, so each call reuses prior turns at ~10% cost.
+        # Note: prefixes under ~4096 tokens silently don't cache on Opus, and
+        # the cache is per-model (changing COACH_MODEL starts fresh).
         resp = client.messages.create(
             model=COACH_MODEL,
             max_tokens=MAX_TOKENS,
-            system=system_prompt,
+            cache_control={"type": "ephemeral"},
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             tools=TOOL_DEFINITIONS,
             messages=messages,
         )
